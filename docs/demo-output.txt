@@ -1,0 +1,109 @@
+go build -o docksmith ./cmd/docksmith
+sudo DOCKSMITH_HOME=$HOME/.docksmith ./scripts/demo.sh
+
+=== 1. Cold build: every layer step must be [CACHE MISS] ===
+$ docksmith build -t myapp:latest /tmp/tmp.OKyzVExLVT
+Step 1/8 : FROM alpine:3.18
+Step 2/8 : WORKDIR /app
+Step 3/8 : ENV APP_NAME=Docksmith
+Step 4/8 : ENV GREETING=Hello
+Step 5/8 : RUN mkdir -p /app/data && echo "dependency layer ready" > /app/data/setup.txt [CACHE MISS] 0.09s
+Step 6/8 : COPY app/ /app/ [CACHE MISS] 0.00s
+Step 7/8 : RUN chmod +x /app/run.sh && echo "build complete" > /app/BUILD_INFO [CACHE MISS] 0.07s
+Step 8/8 : CMD ["/app/run.sh"]
+Successfully built sha256:4c44167a myapp:latest (0.15s)
+
+=== 2. Warm build: every layer step must be [CACHE HIT] ===
+$ docksmith build -t myapp:latest /tmp/tmp.OKyzVExLVT
+Step 1/8 : FROM alpine:3.18
+Step 2/8 : WORKDIR /app
+Step 3/8 : ENV APP_NAME=Docksmith
+Step 4/8 : ENV GREETING=Hello
+Step 5/8 : RUN mkdir -p /app/data && echo "dependency layer ready" > /app/data/setup.txt [CACHE HIT] 0.00s
+Step 6/8 : COPY app/ /app/ [CACHE HIT] 0.00s
+Step 7/8 : RUN chmod +x /app/run.sh && echo "build complete" > /app/BUILD_INFO [CACHE HIT] 0.00s
+Step 8/8 : CMD ["/app/run.sh"]
+Successfully built sha256:4c44167a myapp:latest (0.00s)
+PASS: identical image ID on warm rebuild (4c44167a070f)
+
+=== 3. Edit a source file: that step and all below MISS, steps above HIT ===
+$ docksmith build -t myapp:latest /tmp/tmp.OKyzVExLVT
+Step 1/8 : FROM alpine:3.18
+Step 2/8 : WORKDIR /app
+Step 3/8 : ENV APP_NAME=Docksmith
+Step 4/8 : ENV GREETING=Hello
+Step 5/8 : RUN mkdir -p /app/data && echo "dependency layer ready" > /app/data/setup.txt [CACHE HIT] 0.00s
+Step 6/8 : COPY app/ /app/ [CACHE MISS] 0.03s
+Step 7/8 : RUN chmod +x /app/run.sh && echo "build complete" > /app/BUILD_INFO [CACHE MISS] 0.07s
+Step 8/8 : CMD ["/app/run.sh"]
+Successfully built sha256:b4d70494 myapp:latest (0.10s)
+
+=== 4. docksmith images ===
+$ docksmith images
+NAME    TAG     ID            CREATED
+alpine  3.18    5dfae0f4c9cb  2026-10-09T07:34:38Z
+demo    latest  8c25a02b1c51  2026-10-09T07:36:06Z
+demo2   latest  338d9db6ab39  2026-10-13T14:30:18Z
+myapp   latest  b4d70494d16f  2026-10-14T12:07:13Z
+
+=== 5. docksmith run myapp:latest ===
+$ docksmith run myapp:latest
+================================================
+ Hello from Docksmith!
+================================================
+  ____             _              _ _   _
+ |  _ \  ___   ___| | _____ _ __ (_) |_| |__
+ | | | |/ _ \ / __| |/ / __| '_ \| | __| '_ \
+ | |_| | (_) | (__|   <\__ \ | | | | |_| | | |
+ |____/ \___/ \___|_|\_\___/_| |_|_|\__|_| |_|
+edited 1791979633
+
+hostname : docksmith
+pid      : 1
+workdir  : /app
+build    : build complete
+setup    : dependency layer ready
+root dirs: app bin dev etc home lib media mnt opt proc root run sbin srv sys tmp usr var 
+processes:
+PID   USER     TIME  COMMAND
+    1 root      0:00 {run.sh} /bin/sh /app/run.sh
+   15 root      0:00 ps
+Container exited with code 0
+
+=== 6. Environment override: -e GREETING=Namaste ===
+$ docksmith run -e GREETING=Namaste myapp:latest
+================================================
+ Namaste from Docksmith!
+================================================
+  ____             _              _ _   _
+ |  _ \  ___   ___| | _____ _ __ (_) |_| |__
+ | | | |/ _ \ / __| |/ / __| '_ \| | __| '_ \
+ | |_| | (_) | (__|   <\__ \ | | | | |_| | | |
+ |____/ \___/ \___|_|\_\___/_| |_|_|\__|_| |_|
+edited 1791979633
+
+hostname : docksmith
+pid      : 1
+workdir  : /app
+build    : build complete
+setup    : dependency layer ready
+root dirs: app bin dev etc home lib media mnt opt proc root run sbin srv sys tmp usr var 
+processes:
+PID   USER     TIME  COMMAND
+    1 root      0:00 {run.sh} /bin/sh /app/run.sh
+   14 root      0:00 ps
+Container exited with code 0
+
+=== 7. Isolation: write a file inside the container, then look for it on the host ===
+$ docksmith run myapp:latest /bin/sh -c echo secret > /container-secret.txt && echo "inside the container: $(ls /container-secret.txt)"
+inside the container: /container-secret.txt
+Container exited with code 0
+PASS: container-secret.txt does not exist anywhere on the host
+PASS: temp run directories were cleaned up
+
+=== 8. docksmith rmi myapp:latest ===
+$ docksmith rmi myapp:latest
+removed myapp:latest
+PASS: manifest and all of its layer files were removed
+
+(rmi also removed the shared base layer, so re-importing alpine to keep it usable)
