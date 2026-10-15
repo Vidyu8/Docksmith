@@ -86,6 +86,51 @@ Out of scope: networking, registries, resource limits, multi-stage builds, bind 
 - A **wildcard** source keeps each match's path relative to the pattern's non-wildcard prefix (`src/**/*.py` preserves subdirectories). `**` matches zero or more path segments.
 - A relative destination resolves against the current `WORKDIR`. Sources may not escape the build context, and a source that matches nothing fails the build.
 
+## Using Docksmith with your own project
+
+Anyone with a Linux machine and root can build and run their own project. After the [Quick start](#quick-start) setup:
+
+```bash
+mkdir myproj && cd myproj
+printf '#!/bin/sh\necho "hello $NAME"\n' > hello.sh
+cat > Docksmithfile <<'EOF'
+FROM alpine:3.18
+WORKDIR /srv
+ENV NAME=world
+COPY hello.sh .
+RUN chmod +x hello.sh
+CMD ["/srv/hello.sh"]
+EOF
+cd ..
+
+ds build -t mine:1 myproj
+ds run mine:1                  # hello world
+ds run -e NAME=you mine:1      # hello you
+```
+
+### Constraints
+
+- **Linux and root only.**
+- **No network during build or run.** `RUN apk add ...` or `pip install ...` will fail. Every dependency must be in the build context and brought in with `COPY`.
+- **The base image is minimal Alpine** (busybox `sh` and core utilities): no Python, Node or compilers unless you import a different base image (see below).
+- **Only the six instructions** are supported; anything else fails with a line number.
+
+### What you can package
+
+The Docksmithfile is not limited to tiny scripts: whole directory trees, many files, globs (`COPY **/*.txt /data/`) and chains of `RUN` steps (each cached as its own layer) all work. The limits come from the base image and the offline rule.
+
+| Goal | Works? | How |
+|---|---|---|
+| Multi-file shell projects, text and data processing with busybox tools | Yes | `COPY` the tree, run it from `CMD` |
+| Compiled programs | Yes | Build a **statically linked** binary on the host (e.g. `CGO_ENABLED=0 go build -o myapp .`), `COPY` it in |
+| Python or Node apps | With a different base | Import a Python/Node root filesystem tarball as the base (see below) |
+| `pip install` / `apk add` during the build | No (no network) | Download packages on the host first (e.g. `pip install --target libs`), `COPY` them in |
+| Servers you open in a browser | No | There is no network access from inside the container; CLI programs and batch jobs work |
+
+### Other base images
+
+`docksmith import <name:tag> <rootfs.tar[.gz]>` accepts any root filesystem tarball. For example, export a Python image's filesystem once (`docker export` from a container works) and import it. This is a one-time setup step, not part of build or run, so builds and runs stay fully offline.
+
 ## How it works
 
 ### Architecture
